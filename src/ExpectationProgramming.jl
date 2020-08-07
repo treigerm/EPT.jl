@@ -53,11 +53,11 @@ macro expectation(expr)
     fn_expr_expct1_neg = MacroTools.combinedef(fn_dict)
 
     return quote
-        esc(Turing.@model($fn_expr_expct1_pos))
+        Turing.@model($fn_expr_expct1_pos)
 
-        esc(Turing.@model($fn_expr_expct1_neg))
+        Turing.@model($fn_expr_expct1_neg)
 
-        esc(Turing.@model($fn_expr_expct2))
+        Turing.@model($fn_expr_expct2)
 
         $(esc(fn_name)) = Expectation(
             $(expct1_pos_name),
@@ -99,10 +99,20 @@ end
 
 # TODO: Check the Distributions package and how estimate is used there. 
 # Potentially rename this function.
-function Distributions.estimate(expct::Expectation, alg::TABI{AIS})
+function Distributions.estimate(
+    expct::Expectation, 
+    alg::TABI{AIS}; 
+    store_intermediate_samples=false
+)
     ais = AnnealedISSampler(expct.gamma2, alg.estimation_alg.num_annealing_dists)
     prior_density = ais.prior_density
-    samples = ais_sample(Random.GLOBAL_RNG, ais, alg.estimation_alg.num_samples)
+    samples, Z2_diagnostics = ais_sample(
+        Random.GLOBAL_RNG, 
+        ais, 
+        alg.estimation_alg.num_samples;
+        store_intermediate_samples=store_intermediate_samples
+    )
+    Z2_diagnostics[:samples] = samples
     Z2 = normalisation_constant(samples)
 
     ais = AnnealedISSampler(
@@ -111,7 +121,13 @@ function Distributions.estimate(expct::Expectation, alg::TABI{AIS})
         AnnealedIS.make_log_joint_density(expct.gamma1_pos),
         alg.estimation_alg.num_annealing_dists
     )
-    samples = ais_sample(Random.GLOBAL_RNG, ais, alg.estimation_alg.num_samples)
+    samples, Z1_positive_diagnostics = ais_sample(
+        Random.GLOBAL_RNG, 
+        ais, 
+        alg.estimation_alg.num_samples;
+        store_intermediate_samples=store_intermediate_samples
+    )
+    Z1_positive_diagnostics[:samples] = samples
     Z1_positive = normalisation_constant(samples)
 
     ais = AnnealedISSampler(
@@ -120,7 +136,21 @@ function Distributions.estimate(expct::Expectation, alg::TABI{AIS})
         AnnealedIS.make_log_joint_density(expct.gamma1_neg),
         alg.estimation_alg.num_annealing_dists
     )
-    samples = ais_sample(Random.GLOBAL_RNG, ais, alg.estimation_alg.num_samples)
+    samples, Z1_negative_diagnostics = ais_sample(
+        Random.GLOBAL_RNG, 
+        ais, 
+        alg.estimation_alg.num_samples;
+        store_intermediate_samples=store_intermediate_samples
+    )
+    Z1_negative_diagnostics[:samples] = samples
+    Z1_negative = normalisation_constant(samples)
+
+    return (Z1_positive - Z1_negative) / Z2, (
+        Z2_info = Z2_diagnostics,
+        Z1_positive_info = Z1_positive_diagnostics,
+        Z1_negative_info = Z1_negative_diagnostics,
+    )
+end
     Z1_negative = normalisation_constant(samples)
 
     return (Z1_positive - Z1_negative) / Z2

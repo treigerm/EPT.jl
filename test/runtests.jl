@@ -64,7 +64,7 @@ Random.seed!(42)
             y ~ Normal(x, 1)
             return x^2
         end
-        
+
         yval = 3
         expct_conditioned = expct(yval)
 
@@ -75,9 +75,63 @@ Random.seed!(42)
             AIS(num_annealing_dists, num_samples)
         )
 
-        expct_estimate = estimate(expct_conditioned, tabi)
-        @test !isnan(expct_estimate)
+        #expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
+        #@test !isnan(expct_estimate)
     end
 
-    # TODO: TABI convergence test.
+    # Comment this out because it takes a while.
+    @testset "Convergence test" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x
+        end
+        
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        num_annealing_dists = 100
+        num_samples = 1000
+
+        tabi = TABI(
+            AIS(num_samples, num_annealing_dists)
+        )
+
+        expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
+        @test_broken isapprox(expct_estimate, 1.5, atol=1e-2)
+    end
+
+    @testset "Diagnostics" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        num_annealing_dists = 10
+        num_samples = 10
+
+        tabi = TABI(
+            AIS(num_samples, num_annealing_dists)
+        )
+
+        expct_estimate, diagnostics = estimate(
+            expct_conditioned, 
+            tabi;
+            store_intermediate_samples=true
+        )
+
+        keys = [:Z2_info, :Z1_negative_info, :Z1_positive_info]
+
+        for k in keys
+            @test haskey(diagnostics, k)
+
+            @test typeof(diagnostics[k][:ess]) == Float64
+            @test size(diagnostics[k][:samples]) == (num_samples,)
+            @test haskey(diagnostics[k], :intermediate_samples)
+        end
+    end
 end
