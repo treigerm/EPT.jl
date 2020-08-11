@@ -1,1 +1,8 @@
 Manifest.toml
+
+# Images 
+*.png
+*.pdf
+
+# MacOS 
+.DS_Store
