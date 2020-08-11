@@ -3,6 +3,8 @@ using AnnealedIS
 using Distributions
 using QuadGK
 using Plots
+using JLD
+
 using Random
 using Base.Threads
 using Statistics: mean
@@ -15,6 +17,8 @@ Plots.default(lw=2)
 const NUM_ANNEALING_DISTS = 100
 const NUM_SAMPLES = 10
 const NUM_RUNS = 1
+
+const RESULTS_FILE = "results.jld"
 
 function compute_true_Zs(yval)
     Z1_plus_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval) * max(x,0)
@@ -111,6 +115,50 @@ function convergence_plot(taanis_results, taanis_resample_results, ais_results)
     savefig(p, "convergence.png")
 end
 
+function relative_squared_error(x_hat, true_x) 
+    return (x_hat - true_x)^2 / true_x^2
+end
+
+function display_results(
+    results, # Dict with alg_name => expectation_estimates
+    diagnostics, # Dict with alg_name => diagnostics
+    true_Z, # True value for expectation
+    true_Zs # True values of the individual normalisation constants for TABI
+)
+    for (name, v) in pairs(results)
+        squared_errors = relative_squared_error.(v, true_Z)
+        mean_error = mean(squared_errors)
+        println("$name:")
+        println("")
+        println("Values: $v")
+        println("Relative squared errors: $squared_errors")
+        println("Mean relative squared errors: $mean_error")
+
+        diags = diagnostics[name] # Array of NamedTuple
+        println("ESS:")
+        for estimator_name in keys(diags[1])
+            ess_mean = mean(map(x -> x[estimator_name][:ess], diags))
+            println("$estimator_name: $ess_mean")
+        end
+
+        if name in [:AIS, :AISResample]
+            println("Error in individual estimates:")
+            for estimator_name in keys(diags[1])
+                errors = map(diags) do Z_est
+                    relative_squared_error(
+                        Z_est[estimator_name][:Z_estimate], 
+                        true_Zs[estimator_name]
+                    )
+                end
+                error_mean = mean(errors)
+                
+                println("$estimator_name: $error_mean")
+            end
+        end
+        println("------------------------------")
+    end
+end
+
 function main(num_annealing_dists, num_samples, num_runs)
     @expectation function expct(y)
         x ~ Normal(0, 1) 
@@ -122,7 +170,6 @@ function main(num_annealing_dists, num_samples, num_runs)
     expct_conditioned = expct(yval)
 
     true_x_posterior_mean = 1.5
-    posterior_variance = 0.5
 
     true_Zs = compute_true_Zs(yval)
 
@@ -160,40 +207,10 @@ function main(num_annealing_dists, num_samples, num_runs)
             samples, x -> x[:x])
     end
 
-    relative_squared_error(x_hat, true_x) = (x_hat - true_x)^2 / true_x^2
+    # Save results so they can be used later.
+    JLD.save(RESULTS_FILE, "diagnostics", diagnostics, "results", results)
 
-    for (name, v) in pairs(results)
-        squared_errors = relative_squared_error.(v, true_x_posterior_mean)
-        mean_error = mean(squared_errors)
-        println("$name:")
-        println("")
-        println("Values: $v")
-        println("Relative squared errors: $squared_errors")
-        println("Mean relative squared errors: $mean_error")
-
-        diags = diagnostics[name] # Array of NamedTuple
-        println("ESS:")
-        for estimator_name in keys(diags[1])
-            ess_mean = mean(map(x -> x[estimator_name][:ess], diags))
-            println("$estimator_name: $ess_mean")
-        end
-
-        if name in [:AIS, :AISResample]
-            println("Error in individual estimates:")
-            for estimator_name in keys(diags[1])
-                errors = map(diags) do Z_est
-                    relative_squared_error(
-                        Z_est[estimator_name][:Z_estimate], 
-                        true_Zs[estimator_name]
-                    )
-                end
-                error_mean = mean(errors)
-                
-                println("$estimator_name: $error_mean")
-            end
-        end
-        println("------------------------------")
-    end
+    display_results(results, diagnostics, true_x_posterior_mean, true_Zs)
 
     convergence_plot(
         diagnostics[:AIS], 
