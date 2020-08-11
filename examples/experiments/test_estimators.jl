@@ -56,7 +56,12 @@ function expectations(samples::Array{AnnealedIS.WeightedSample}, f)
     return cumsum(weighted_terms) ./ cumsum(weights)
 end
 
-function convergence_plot(taanis_results, taanis_resample_results, ais_results)
+function convergence_plot(
+    taanis_results, 
+    taanis_resample_results, 
+    ais_results,
+    true_expectation_value
+)
     num_runs = length(taanis_results)
     num_samples_ais = length(ais_results[1][:Z][:samples])
     # TODO: Control number of samples when Z2 = 0.
@@ -93,8 +98,16 @@ function convergence_plot(taanis_results, taanis_resample_results, ais_results)
             Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
     end 
 
-    # TODO: calculate error 
-    # TODO: Make this plot more fancy
+    ais_errors = relative_squared_error.(
+        ais_intermediates, true_expectation_value
+    )
+    taanis_errors = relative_squared_error.(
+        taanis_intermediates, true_expectation_value
+    )
+    taanis_resamples_errors = relative_squared_error.(
+        taanis_resamples_intermediates, true_expectation_value
+    )
+
     p = plot(
         1:num_samples_ais, 
         ais_intermediates[1,:],
@@ -112,7 +125,34 @@ function convergence_plot(taanis_results, taanis_resample_results, ais_results)
         taanis_intermediates[1,:],
         label="TAAnIS"
     )
+    plot!(
+        p,
+        1:num_samples_ais,
+        fill(true_expectation_value, num_samples_ais),
+        linestyle=:dash,
+        color=:black,
+        label="Ground truth"
+    )
     savefig(p, "convergence.png")
+
+    p2 = plot(
+        1:num_samples_ais, 
+        median(ais_errors, dims=1)[1,:],
+        label="AnIS"
+    )
+    plot!(
+        p2, 
+        (1:num_samples_taanis) * 3, 
+        median(taanis_resamples_errors, dims=1)[1,:],
+        label="TAAnIS (resampling)"
+    )
+    plot!(
+        p2, 
+        (1:num_samples_taanis) * 3, 
+        median(taanis_errors, dims=1)[1,:],
+        label="TAAnIS"
+    )
+    savefig(p2, "errors.png")
 end
 
 function relative_squared_error(x_hat, true_x) 
@@ -215,7 +255,8 @@ function main(num_annealing_dists, num_samples, num_runs)
     convergence_plot(
         diagnostics[:AIS], 
         diagnostics[:AISResample],
-        diagnostics[:StandardAIS]
+        diagnostics[:StandardAIS],
+        true_x_posterior_mean
     )
 end
 
