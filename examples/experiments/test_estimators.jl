@@ -52,12 +52,14 @@ function expectations(samples::Array{AnnealedIS.WeightedSample}, f)
     return cumsum(weighted_terms) ./ cumsum(weights)
 end
 
-function convergence_plot(taanis_results, ais_results)
+function convergence_plot(taanis_results, taanis_resample_results, ais_results)
     num_runs = length(taanis_results)
     num_samples_ais = length(ais_results[1][:Z][:samples])
     # TODO: Control number of samples when Z2 = 0.
     num_samples_taanis = Int(num_samples_ais / 3)
     taanis_intermediates = Array{Float64}(undef, num_runs, num_samples_taanis)
+    taanis_resamples_intermediates = Array{Float64}(
+        undef, num_runs, num_samples_taanis)
     ais_intermediates = Array{Float64}(undef, num_runs, num_samples_ais)
 
     for i in 1:num_runs
@@ -69,20 +71,43 @@ function convergence_plot(taanis_results, ais_results)
             Z1_negative_info = Array{Float64}(undef, num_samples_taanis),
             Z2_info = Array{Float64}(undef, num_samples_taanis)
         )
-
         for k in keys(Zs)
             samples = taanis_results[i][k][:samples]
             Zs[k][:] = normalisation_constants(samples)
         end
-
         taanis_intermediates[i,:] = (
+            Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
+        
+        for k in keys(Zs)
+            samples = taanis_resample_results[i][k][:samples]
+            Ns = 1:length(samples)
+            rejections = taanis_resample_results[i][k][:num_rejected]
+            acceptance_ratio = Ns ./ (Ns .+ cumsum(rejections))
+            Zs[k][:] = acceptance_ratio .* normalisation_constants(samples)
+        end
+        taanis_resamples_intermediates[i,:] = (
             Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
     end 
 
     # TODO: calculate error 
     # TODO: Make this plot more fancy
-    p = plot(1:num_samples_ais, ais_intermediates[1,:])
-    plot!(p, (1:num_samples_taanis) * 3, taanis_intermediates[1,:])
+    p = plot(
+        1:num_samples_ais, 
+        ais_intermediates[1,:],
+        label="AnIS"
+    )
+    plot!(
+        p, 
+        (1:num_samples_taanis) * 3, 
+        taanis_resamples_intermediates[1,:],
+        label="TAAnIS (resampling)"
+    )
+    plot!(
+        p, 
+        (1:num_samples_taanis) * 3, 
+        taanis_intermediates[1,:],
+        label="TAAnIS"
+    )
     savefig(p, "convergence.png")
 end
 
@@ -103,6 +128,7 @@ function main(num_annealing_dists, num_samples, num_runs)
 
     algorithms = [
         :AIS, 
+        :AISResample,
         :StandardAIS
     ]
 
@@ -120,11 +146,18 @@ function main(num_annealing_dists, num_samples, num_runs)
         )
         results[:AIS][i], diagnostics[:AIS][i] = estimate(expct_conditioned, tabi)
 
+        tabi_resample = TABI(
+            AIS(num_samples, num_annealing_dists, RejectionResample())
+        )
+        results[:AISResample][i], diagnostics[:AISResample][i] = estimate(
+            expct_conditioned, tabi_resample)
+
         ais = AnnealedISSampler(expct_conditioned.gamma2, num_annealing_dists)
         samples, diag = ais_sample(Random.GLOBAL_RNG, ais, 3*num_samples)
         diag[:samples] = samples
         diagnostics[:StandardAIS][i] = (Z = diag,)
-        results[:StandardAIS][i] = AnnealedIS.estimate_expectation(samples, x -> x[:x])
+        results[:StandardAIS][i] = AnnealedIS.estimate_expectation(
+            samples, x -> x[:x])
     end
 
     relative_squared_error(x_hat, true_x) = (x_hat - true_x)^2 / true_x^2
@@ -145,7 +178,7 @@ function main(num_annealing_dists, num_samples, num_runs)
             println("$estimator_name: $ess_mean")
         end
 
-        if name in [:AIS]
+        if name in [:AIS, :AISResample]
             println("Error in individual estimates:")
             for estimator_name in keys(diags[1])
                 errors = map(diags) do Z_est
@@ -162,7 +195,11 @@ function main(num_annealing_dists, num_samples, num_runs)
         println("------------------------------")
     end
 
-    convergence_plot(diagnostics[:AIS], diagnostics[:StandardAIS])
+    convergence_plot(
+        diagnostics[:AIS], 
+        diagnostics[:AISResample],
+        diagnostics[:StandardAIS]
+    )
 end
 
 main(NUM_ANNEALING_DISTS, NUM_SAMPLES, NUM_RUNS)
