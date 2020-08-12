@@ -91,8 +91,18 @@ function translate_return(expr, is_positive_expectation)
     end
 end
 
-struct TABI{T<:Turing.InferenceAlgorithm}
-    estimation_alg::T
+struct TABI{S<:Turing.InferenceAlgorithm,T<:Turing.InferenceAlgorithm,U<:Turing.InferenceAlgorithm}
+    Z1_pos_alg::S
+    Z1_neg_alg::T
+    Z2_alg::U
+end
+
+function TABI(estimation_alg::T) where {T<:Turing.InferenceAlgorithm}
+    return TABI(
+        estimation_alg,
+        estimation_alg,
+        estimation_alg
+    )
 end
 
 struct AIS{T<:AnnealedIS.RejectionSampler} <: Turing.InferenceAlgorithm
@@ -105,49 +115,62 @@ end
 # Potentially rename this function.
 function Distributions.estimate(
     expct::Expectation, 
-    alg::TABI{AIS{T}}; 
+    alg::TABI{AIS{T},AIS{T},AIS{T}}; 
     kwargs...
-) where {T <: AnnealedIS.RejectionSampler}
+) where {T<:AnnealedIS.RejectionSampler}
+    # TODO: Ensure function is type-stable
     ais = AnnealedISSampler(
         expct.gamma2, 
-        alg.estimation_alg.num_annealing_dists,
-        alg.estimation_alg.rejection_sampler
+        alg.Z2_alg.num_annealing_dists,
+        alg.Z2_alg.rejection_sampler
 )
     prior_density = ais.prior_density
     Z2_diagnostics = estimate_normalisation_constant(
-        alg, 
-        ais;
+        ais,
+        alg.Z2_alg.num_samples;
         kwargs...
     )
     Z2 = Z2_diagnostics[:Z_estimate]
 
+    if alg.Z1_pos_alg.num_samples > 0
     ais = AnnealedISSampler(
         rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_pos), 
         prior_density,
         AnnealedIS.make_log_joint_density(expct.gamma1_pos),
-        alg.estimation_alg.num_annealing_dists,
-        alg.estimation_alg.rejection_sampler
+            alg.Z1_pos_alg.num_annealing_dists,
+            alg.Z1_pos_alg.rejection_sampler
     )
     Z1_positive_diagnostics = estimate_normalisation_constant(
-        alg, 
-        ais;
+            ais,
+            alg.Z1_pos_alg.num_samples;
         kwargs...
     )
     Z1_positive = Z1_positive_diagnostics[:Z_estimate]
+    else
+        Z1_positive = 0
+        Z1_positive_diagnostics = Dict()
+        Z1_negative_diagnostics[:Z_estimate] = Z1_positive
+    end
 
+    if alg.Z1_neg_alg.num_samples > 0
     ais = AnnealedISSampler(
         rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_neg), 
         prior_density,
         AnnealedIS.make_log_joint_density(expct.gamma1_neg),
-        alg.estimation_alg.num_annealing_dists,
-        alg.estimation_alg.rejection_sampler
+            alg.Z1_neg_alg.num_annealing_dists,
+            alg.Z1_neg_alg.rejection_sampler
     )
     Z1_negative_diagnostics = estimate_normalisation_constant(
-        alg, 
-        ais;
+            ais,
+            alg.Z1_neg_alg.num_samples;
         kwargs...
     )
     Z1_negative = Z1_negative_diagnostics[:Z_estimate]
+    else
+        Z1_negative = 0
+        Z1_negative_diagnostics = Dict()
+        Z1_negative_diagnostics[:Z_estimate] = Z1_negative
+    end
 
     return (Z1_positive - Z1_negative) / Z2, (
         Z2_info = Z2_diagnostics,
@@ -206,14 +229,14 @@ end
     Z1_negative = normalisation_constant(samples)
 
 function estimate_normalisation_constant(
-    alg::TABI{AIS{SimpleRejection}},
-    ais::AnnealedISSampler{SimpleRejection};
+    ais::AnnealedISSampler{SimpleRejection},
+    num_samples;
     kwargs...
 )
     samples, diagnostics = ais_sample(
         Random.GLOBAL_RNG, 
         ais, 
-        alg.estimation_alg.num_samples;
+        num_samples;
         kwargs...
     )
     diagnostics[:samples] = samples
@@ -222,11 +245,11 @@ function estimate_normalisation_constant(
 end
 
 function estimate_normalisation_constant(
-    alg::TABI{AIS{RejectionResample}},
-    ais::AnnealedISSampler{RejectionResample};
+    ais::AnnealedISSampler{RejectionResample},
+    num_samples;
     kwargs...
 )
-    num_samples = alg.estimation_alg.num_samples
+    num_samples = num_samples
     samples, diagnostics = ais_sample(
         Random.GLOBAL_RNG, 
         ais, 

@@ -75,8 +75,8 @@ Random.seed!(42)
             AIS(num_annealing_dists, num_samples, SimpleRejection())
         )
 
-        #expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
-        #@test !isnan(expct_estimate)
+        expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
+        @test !isnan(expct_estimate)
     end
 
     # Comment this out because it takes a while.
@@ -166,5 +166,41 @@ Random.seed!(42)
             tabi_rejection;
             store_intermediate_samples=true
         )
+    end
+
+    @testset "Disable Z1_pos or Z1_neg" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x^2
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        num_annealing_dists = 10
+        num_samples = 2
+
+        tabi_no_Z1_neg = TABI(
+            AIS(num_samples, num_annealing_dists, SimpleRejection()),
+            AIS(0, num_annealing_dists, SimpleRejection()),
+            AIS(num_samples, num_annealing_dists, SimpleRejection())
+        )
+
+        _, d =  estimate(
+            expct_conditioned, 
+            tabi_no_Z1_neg;
+            store_intermediate_samples=true
+        )
+
+        full_tabi = TABI(AIS(num_samples, num_annealing_dists, SimpleRejection()))
+        _, d_full =  estimate(
+            expct_conditioned, 
+            tabi_no_Z1_neg;
+            store_intermediate_samples=true
+        )
+
+        # Check that estimate is type-stable.
+        @test typeof(d_full) == typeof(d)
     end
 end
