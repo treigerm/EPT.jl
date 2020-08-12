@@ -18,16 +18,18 @@ const NUM_ANNEALING_DISTS = 100
 const NUM_SAMPLES = 10
 const NUM_RUNS = 1
 
+const FX = :gauss
+
 const RESULTS_FILE = "results.jld"
 
-function compute_true_Zs(yval)
-    Z1_plus_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval) * max(x,0)
-    Z1_minus_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval) * (-min(x,0))
+function compute_true_Zs(yval, f)
+    Z1_plus_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval) * max(f(x),0)
+    Z1_minus_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval) * (-min(f(x),0))
     Z2_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval)
 
     Z1_positive_true, _ = quadgk(Z1_plus_target, 0, 20, atol=1e-16)
-    Z1_negative_true, _ = quadgk(Z1_minus_target, -10, 0, atol=1e-16)
-    Z2_true, _ = quadgk(Z2_target, -10, 20, atol=1e-16)
+    Z1_negative_true, _ = quadgk(Z1_minus_target, -20, 0, atol=1e-16)
+    Z2_true, _ = quadgk(Z2_target, -20, 20, atol=1e-16)
 
     return (
         Z2_info = Z2_true,
@@ -60,6 +62,7 @@ function convergence_plot(
     taanis_results, 
     taanis_resample_results, 
     ais_results,
+    ais_f,
     true_expectation_value
 )
     num_runs = length(taanis_results)
@@ -73,21 +76,21 @@ function convergence_plot(
 
     for i in 1:num_runs
         ais_samples = ais_results[i][:Z][:samples]
-        ais_intermediates[i,:] = expectations(ais_samples, x -> x[:x])
+        ais_intermediates[i,:] = expectations(ais_samples, ais_f)
 
         Zs = (
-            Z1_positive_info = Array{Float64}(undef, num_samples_taanis),
-            Z1_negative_info = Array{Float64}(undef, num_samples_taanis),
+            Z1_positive_info = zeros(Float64, num_samples_taanis),
+            Z1_negative_info = zeros(Float64, num_samples_taanis),
             Z2_info = Array{Float64}(undef, num_samples_taanis)
         )
-        for k in keys(Zs)
+        for k in keys(taanis_results[i])
             samples = taanis_results[i][k][:samples]
             Zs[k][:] = normalisation_constants(samples)
         end
         taanis_intermediates[i,:] = (
             Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
         
-        for k in keys(Zs)
+        for k in keys(taanis_resample_results[i])
             samples = taanis_resample_results[i][k][:samples]
             Ns = 1:length(samples)
             rejections = taanis_resample_results[i][k][:num_rejected]
@@ -199,19 +202,66 @@ function display_results(
     end
 end
 
-function main(num_annealing_dists, num_samples, num_runs)
-    @expectation function expct(y)
-        x ~ Normal(0, 1) 
-        y ~ Normal(x, 1)
-        return x
+function main(num_annealing_dists, num_samples, num_runs, fx)
+    if fx == :posterior_mean
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        true_expectation_value = 1.5
+        true_Zs = compute_true_Zs(yval, x -> x)
+
+        ais_f = x -> x[:x]
+    elseif fx == :seventh_moment
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x^7
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        posterior_mean = 1.5
+        posterior_variance = 0.5
+
+        # Formula taken from https://en.wikipedia.org/wiki/Normal_distribution#Moments
+        true_expectation_value = posterior_mean^7 + 
+            21*posterior_mean^5*posterior_variance + 
+            105*posterior_mean^3*posterior_variance^2 + 
+            105*posterior_mean*posterior_variance^3
+        true_Zs = compute_true_Zs(yval, x -> x^7)
+
+        ais_f = x -> x[:x]^7
+    elseif fx == :gauss
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return pdf(Normal(-y, sqrt(0.5)), x)
+        end
+
+        yval = -5
+        expct_conditioned = expct(yval)
+
+        # Code from Sheh
+        # true_expectation_value = exp(
+        #     -0.5 * log(2*π) - 0.5 * (-yval - 0.5 * yval)^2
+        # )
+        true_expectation_value =  pdf(Normal(yval / 2, 1), -yval)
+        true_Zs = compute_true_Zs(
+            yval,
+            x -> pdf(Normal(-yval, sqrt(0.5)), x)
+        )
+
+        ais_f = x -> pdf(Normal(-yval, sqrt(0.5)), x[:x])
+    else
+        error("Unkown function type: $fx")
     end
-
-    yval = 3
-    expct_conditioned = expct(yval)
-
-    true_x_posterior_mean = 1.5
-
-    true_Zs = compute_true_Zs(yval)
 
     algorithms = [
         :AIS, 
@@ -228,36 +278,65 @@ function main(num_annealing_dists, num_samples, num_runs)
 
     @threads for i in 1:num_runs
         println("Run $i")
-        tabi = TABI(
-            AIS(num_samples, num_annealing_dists, SimpleRejection())
-        )
+        tabi = if fx == :gauss
+            TABI(
+                AIS(num_samples, num_annealing_dists, SimpleRejection()),
+                AIS(0, 0, SimpleRejection()),
+                AIS(num_samples, num_annealing_dists, SimpleRejection())
+            )
+        else
+            TABI(
+                AIS(num_samples, num_annealing_dists, SimpleRejection())
+            )
+        end
         results[:AIS][i], diagnostics[:AIS][i] = estimate(expct_conditioned, tabi)
+        if fx == :gauss
+            # Remove Z1_negative_info field because it is not used.
+            diagnostics[:AIS][i] = Base.structdiff(
+                diagnostics[:AIS][i], (Z1_negative_info=Dict(),)
+            )
+        end
 
-        tabi_resample = TABI(
-            AIS(num_samples, num_annealing_dists, RejectionResample())
-        )
+        tabi_resample = if fx == :gauss
+            TABI(
+                AIS(num_samples, num_annealing_dists, RejectionResample()),
+                AIS(0, 0, RejectionResample()),
+                AIS(num_samples, num_annealing_dists, RejectionResample())
+            )
+        else
+            TABI(
+                AIS(num_samples, num_annealing_dists, RejectionResample())
+            )
+        end
         results[:AISResample][i], diagnostics[:AISResample][i] = estimate(
             expct_conditioned, tabi_resample)
+        if fx == :gauss
+            # Remove Z1_negative_info field because it is not used.
+            diagnostics[:AISResample][i] = Base.structdiff(
+                diagnostics[:AISResample][i], (Z1_negative_info=Dict(),)
+            )
+        end
 
         ais = AnnealedISSampler(expct_conditioned.gamma2, num_annealing_dists)
         samples, diag = ais_sample(Random.GLOBAL_RNG, ais, 3*num_samples)
         diag[:samples] = samples
         diagnostics[:StandardAIS][i] = (Z = diag,)
         results[:StandardAIS][i] = AnnealedIS.estimate_expectation(
-            samples, x -> x[:x])
+            samples, ais_f)
     end
 
     # Save results so they can be used later.
     JLD.save(RESULTS_FILE, "diagnostics", diagnostics, "results", results)
 
-    display_results(results, diagnostics, true_x_posterior_mean, true_Zs)
+    display_results(results, diagnostics, true_expectation_value, true_Zs)
 
     convergence_plot(
         diagnostics[:AIS], 
         diagnostics[:AISResample],
         diagnostics[:StandardAIS],
-        true_x_posterior_mean
+        ais_f,
+        true_expectation_value
     )
 end
 
-main(NUM_ANNEALING_DISTS, NUM_SAMPLES, NUM_RUNS)
+main(NUM_ANNEALING_DISTS, NUM_SAMPLES, NUM_RUNS, FX)
