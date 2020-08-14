@@ -2,7 +2,6 @@ using ExpectationProgramming
 using AnnealedIS
 using Distributions
 using QuadGK
-using Plots
 using JLD
 
 using Random
@@ -21,6 +20,8 @@ const NUM_RUNS = 1
 const FX = :gauss
 
 const RESULTS_FILE = "results.jld"
+
+include("utils.jl")
 
 function compute_true_Zs(yval, f)
     Z1_plus_target(x) = pdf(Normal(0, 1), x) * pdf(Normal(x, 1), yval) * max(f(x),0)
@@ -58,150 +59,6 @@ function expectations(samples::Array{AnnealedIS.WeightedSample}, f)
     return cumsum(weighted_terms) ./ cumsum(weights)
 end
 
-function convergence_plot(
-    taanis_results, 
-    taanis_resample_results, 
-    ais_results,
-    ais_f,
-    true_expectation_value
-)
-    num_runs = length(taanis_results)
-    num_samples_ais = length(ais_results[1][:Z][:samples])
-    # TODO: Control number of samples when Z2 = 0.
-    num_samples_taanis = Int(num_samples_ais / 3)
-    taanis_intermediates = Array{Float64}(undef, num_runs, num_samples_taanis)
-    taanis_resamples_intermediates = Array{Float64}(
-        undef, num_runs, num_samples_taanis)
-    ais_intermediates = Array{Float64}(undef, num_runs, num_samples_ais)
-
-    for i in 1:num_runs
-        ais_samples = ais_results[i][:Z][:samples]
-        ais_intermediates[i,:] = expectations(ais_samples, ais_f)
-
-        Zs = (
-            Z1_positive_info = zeros(Float64, num_samples_taanis),
-            Z1_negative_info = zeros(Float64, num_samples_taanis),
-            Z2_info = Array{Float64}(undef, num_samples_taanis)
-        )
-        for k in keys(taanis_results[i])
-            samples = taanis_results[i][k][:samples]
-            Zs[k][:] = normalisation_constants(samples)
-        end
-        taanis_intermediates[i,:] = (
-            Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
-        
-        for k in keys(taanis_resample_results[i])
-            samples = taanis_resample_results[i][k][:samples]
-            Ns = 1:length(samples)
-            rejections = taanis_resample_results[i][k][:num_rejected]
-            acceptance_ratio = Ns ./ (Ns .+ cumsum(rejections))
-            Zs[k][:] = acceptance_ratio .* normalisation_constants(samples)
-        end
-        taanis_resamples_intermediates[i,:] = (
-            Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
-    end 
-
-    ais_errors = relative_squared_error.(
-        ais_intermediates, true_expectation_value
-    )
-    taanis_errors = relative_squared_error.(
-        taanis_intermediates, true_expectation_value
-    )
-    taanis_resamples_errors = relative_squared_error.(
-        taanis_resamples_intermediates, true_expectation_value
-    )
-
-    p = plot(
-        1:num_samples_ais, 
-        ais_intermediates[1,:],
-        label="AnIS"
-    )
-    plot!(
-        p, 
-        (1:num_samples_taanis) * 3, 
-        taanis_resamples_intermediates[1,:],
-        label="TAAnIS (resampling)"
-    )
-    plot!(
-        p, 
-        (1:num_samples_taanis) * 3, 
-        taanis_intermediates[1,:],
-        label="TAAnIS"
-    )
-    plot!(
-        p,
-        1:num_samples_ais,
-        fill(true_expectation_value, num_samples_ais),
-        linestyle=:dash,
-        color=:black,
-        label="Ground truth"
-    )
-    savefig(p, "convergence.png")
-
-    p2 = plot(
-        1:num_samples_ais, 
-        median(ais_errors, dims=1)[1,:],
-        label="AnIS"
-    )
-    plot!(
-        p2, 
-        (1:num_samples_taanis) * 3, 
-        median(taanis_resamples_errors, dims=1)[1,:],
-        label="TAAnIS (resampling)"
-    )
-    plot!(
-        p2, 
-        (1:num_samples_taanis) * 3, 
-        median(taanis_errors, dims=1)[1,:],
-        label="TAAnIS"
-    )
-    savefig(p2, "errors.png")
-end
-
-function relative_squared_error(x_hat, true_x) 
-    return (x_hat - true_x)^2 / true_x^2
-end
-
-function display_results(
-    results, # Dict with alg_name => expectation_estimates
-    diagnostics, # Dict with alg_name => diagnostics
-    true_Z, # True value for expectation
-    true_Zs # True values of the individual normalisation constants for TABI
-)
-    for (name, v) in pairs(results)
-        squared_errors = relative_squared_error.(v, true_Z)
-        mean_error = mean(squared_errors)
-        println("$name:")
-        println("")
-        println("Values: $v")
-        println("Relative squared errors: $squared_errors")
-        println("Mean relative squared errors: $mean_error")
-
-        diags = diagnostics[name] # Array of NamedTuple
-        println("ESS:")
-        for estimator_name in keys(diags[1])
-            ess_mean = mean(map(x -> x[estimator_name][:ess], diags))
-            println("$estimator_name: $ess_mean")
-        end
-
-        if name in [:AIS, :AISResample]
-            println("Error in individual estimates:")
-            for estimator_name in keys(diags[1])
-                errors = map(diags) do Z_est
-                    relative_squared_error(
-                        Z_est[estimator_name][:Z_estimate], 
-                        true_Zs[estimator_name]
-                    )
-                end
-                error_mean = mean(errors)
-                
-                println("$estimator_name: $error_mean")
-            end
-        end
-        println("------------------------------")
-    end
-end
-
 function main(num_annealing_dists, num_samples, num_runs, fx)
     if fx == :posterior_mean
         @expectation function expct(y)
@@ -217,6 +74,7 @@ function main(num_annealing_dists, num_samples, num_runs, fx)
         true_Zs = compute_true_Zs(yval, x -> x)
 
         ais_f = x -> x[:x]
+        ais_factor = 3
     elseif fx == :seventh_moment
         @expectation function expct(y)
             x ~ Normal(0, 1) 
@@ -238,6 +96,7 @@ function main(num_annealing_dists, num_samples, num_runs, fx)
         true_Zs = compute_true_Zs(yval, x -> x^7)
 
         ais_f = x -> x[:x]^7
+        ais_factor = 3
     elseif fx == :gauss
         @expectation function expct(y)
             x ~ Normal(0, 1) 
@@ -259,6 +118,7 @@ function main(num_annealing_dists, num_samples, num_runs, fx)
         )
 
         ais_f = x -> pdf(Normal(-yval, sqrt(0.5)), x[:x])
+        ais_factor = 2
     else
         error("Unkown function type: $fx")
     end
@@ -318,7 +178,7 @@ function main(num_annealing_dists, num_samples, num_runs, fx)
         end
 
         ais = AnnealedISSampler(expct_conditioned.gamma2, num_annealing_dists)
-        samples, diag = ais_sample(Random.GLOBAL_RNG, ais, 3*num_samples)
+        samples, diag = ais_sample(Random.GLOBAL_RNG, ais, ais_factor*num_samples)
         diag[:samples] = samples
         diagnostics[:StandardAIS][i] = (Z = diag,)
         results[:StandardAIS][i] = AnnealedIS.estimate_expectation(
@@ -326,7 +186,15 @@ function main(num_annealing_dists, num_samples, num_runs, fx)
     end
 
     # Save results so they can be used later.
-    JLD.save(RESULTS_FILE, "diagnostics", diagnostics, "results", results)
+    JLD.save(
+        RESULTS_FILE, 
+        "diagnostics", diagnostics, 
+        "results", results,
+        "true_Zs", true_Zs,
+        "true_expectation_value", true_expectation_value,
+        "fx", fx,
+        "ais_factor", ais_factor
+    )
 
     display_results(results, diagnostics, true_expectation_value, true_Zs)
 
@@ -335,6 +203,7 @@ function main(num_annealing_dists, num_samples, num_runs, fx)
         diagnostics[:AISResample],
         diagnostics[:StandardAIS],
         ais_f,
+        ais_factor,
         true_expectation_value
     )
 end
