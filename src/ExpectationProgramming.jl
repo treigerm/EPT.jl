@@ -79,10 +79,12 @@ function translate_return(expr, is_positive_expectation)
             # TODO: Possibly use the macro @addlogp!() to get rid of warning
             quote
                 $(tmp_var) = $r
+                if _context isa Turing.DefaultContext
                 if $is_positive_expectation
                     Turing.acclogp!(_varinfo, log(max($(tmp_var), 0)))
                 else
                     Turing.acclogp!(_varinfo, log(-min($(tmp_var), 0)))
+                end
                 end
                 return $(tmp_var)
             end

@@ -3,6 +3,8 @@ using Turing
 using Test
 using Random
 
+import AnnealedIS
+
 #rng = MersenneTwister(42)
 Random.seed!(42)
 
@@ -230,5 +232,24 @@ Random.seed!(42)
         for key in [:Z1_positive_info, :Z1_negative_info, :Z2_info]
             @test typeof(diag[key]) <: MCMCChains.Chains
         end
+    end
+
+    @testset "Prior extraction" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        log_prior = AnnealedIS.make_log_prior_density(
+            expct_conditioned.gamma1_pos
+        )
+
+        xval = 0.0
+        true_prior = logpdf(Normal(0,1), xval)
+        @test log_prior((x = xval,)) == true_prior
     end
 end
