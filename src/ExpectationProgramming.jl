@@ -12,6 +12,7 @@ export @expectation,
     Expectation,
     TABI,
     AIS,
+    TuringAlgorithm,
     estimate,
     # Reexports
     RejectionResample,
@@ -111,8 +112,11 @@ struct AIS{T<:AnnealedIS.RejectionSampler} <: Turing.InferenceAlgorithm
     rejection_sampler::T
 end
 
-# TODO: Check the Distributions package and how estimate is used there. 
-# Potentially rename this function.
+struct TuringAlgorithm{T<:Turing.InferenceAlgorithm} <: Turing.InferenceAlgorithm
+    inference_algorithm::T
+    num_samples::Int
+end
+
 function Distributions.estimate(
     expct::Expectation, 
     alg::TABI{AIS{T},AIS{T},AIS{T}}; 
@@ -179,6 +183,30 @@ function Distributions.estimate(
     )
 end
 
+function Distributions.estimate(
+    expct::Expectation,
+    alg::TABI{T,T,T};
+    kwargs...
+) where {T<:TuringAlgorithm}
+    Z1_positive, Z1_positive_chain = estimate_normalisation_constant(
+        expct.gamma1_pos, alg.Z1_pos_alg; kwargs...
+    )
+
+    Z1_negative, Z1_negative_chain = estimate_normalisation_constant(
+        expct.gamma1_neg, alg.Z1_neg_alg; kwargs...
+    )
+
+    Z2, Z2_chain = estimate_normalisation_constant(
+        expct.gamma2, alg.Z2_alg; kwargs...
+    )
+
+    return (Z1_positive - Z1_negative) / Z2, (
+        Z2_info = Z2_chain,
+        Z1_positive_info = Z1_positive_chain,
+        Z1_negative_info = Z1_negative_chain,
+    )
+end
+
     ais = AnnealedISSampler(expct.gamma2, alg.estimation_alg.num_annealing_dists)
     prior_density = ais.prior_density
     samples, Z2_diagnostics = ais_sample(
@@ -226,7 +254,24 @@ end
         Z1_negative_info = Z1_negative_diagnostics,
     )
 end
-    Z1_negative = normalisation_constant(samples)
+function estimate_normalisation_constant(
+    model::Turing.Model,
+    alg::TuringAlgorithm;
+    kwargs...
+)
+    Z_estimate = 0
+    chain = nothing
+    if alg.num_samples > 0
+        chain = sample(
+            model, 
+            alg.inference_algorithm, 
+            alg.num_samples;
+            kwargs...
+        )
+        Z_estimate = exp(chain.logevidence)
+    end
+    return Z_estimate, chain
+end
 
 function estimate_normalisation_constant(
     ais::AnnealedISSampler{SimpleRejection},

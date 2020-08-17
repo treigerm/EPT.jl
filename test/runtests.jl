@@ -203,4 +203,32 @@ Random.seed!(42)
         # Check that estimate is type-stable.
         @test typeof(d_full) == typeof(d)
     end
+
+    @testset "Turing Importance Sampling" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        num_samples = 10
+
+        tabi = TABI(
+            TuringAlgorithm(IS(), num_samples)
+        )
+        
+        expct_estimate, diag = estimate(
+            expct_conditioned, 
+            tabi;
+            progress=false
+        )
+
+        @test typeof(expct_estimate) == Float64
+        for key in [:Z1_positive_info, :Z1_negative_info, :Z2_info]
+            @test typeof(diag[key]) <: MCMCChains.Chains
+        end
+    end
 end
