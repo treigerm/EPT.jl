@@ -252,4 +252,29 @@ Random.seed!(42)
         true_prior = logpdf(Normal(0,1), xval)
         @test log_prior((x = xval,)) == true_prior
     end
+
+    @testset "Turing AnIS" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x
+        end
+
+        yval = 3
+        expct_conditioned = expct(yval)
+
+        num_samples = 10
+        num_annealing_dists = 10
+
+        tabi = TABI(
+            TuringAlgorithm(AnIS(num_annealing_dists), num_samples)
+        )
+        
+        expct_estimate, diag = estimate(expct_conditioned, tabi)
+
+        @test typeof(expct_estimate) == Float64
+        for key in [:Z1_positive_info, :Z1_negative_info, :Z2_info]
+            @test typeof(diag[key]) <: MCMCChains.Chains
+        end
+    end
 end
