@@ -38,26 +38,18 @@ Random.seed!(42)
         @test Turing.getlogp(vi) == gamma1_neg_lp
     end
 
-    @testset "Broken test" begin
-        """
-        This does not work because somehow I haven't got it to work that the 
-        code in the function body gets evaluated in the scope of the user module.
-        So here when calling expct() f is not in scope, even though it should 
-        work.
-        """
+    @testset "Correct scoping" begin
+        # Checks that we can access functions that are in the current scope 
+        # inside the model body (here f).
+        f(x) = x^2
+        @expectation function expct()
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return f(x)
+        end
 
-        #f(x) = x^2
-        #@expectation function expct()
-        #    x ~ Normal(0, 1) 
-        #    y ~ Normal(x, 1)
-        #    return f(x)
-        #end
-        
-        #xval = 2
-        #yval = 1
-        #vi = Turing.VarInfo(expct.gamma1_pos())
-        #vi[@varname(x)] = [xval;]
-        #vi[@varname(y)] = [yval;]
+        fx = expct.gamma1_pos()()
+        @test isa(fx, Float64)
     end
 
     @testset "Expectation Estimation" begin
@@ -267,7 +259,7 @@ Random.seed!(42)
         num_annealing_dists = 10
 
         tabi = TABI(
-            TuringAlgorithm(AnIS(num_annealing_dists), num_samples)
+            TuringAlgorithm(AnnealedIS.AnIS(num_annealing_dists), num_samples)
         )
         
         expct_estimate, diag = estimate(expct_conditioned, tabi)

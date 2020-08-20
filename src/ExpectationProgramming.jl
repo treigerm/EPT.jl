@@ -46,29 +46,34 @@ macro expectation(expr)
 
     fn_dict[:name] = expct2_name
     fn_expr_expct2 = MacroTools.combinedef(fn_dict)
+    fn_expr_expct2 = Turing.DynamicPPL.model(fn_expr_expct2, true)
 
     fn_body = fn_dict[:body]
     fn_dict[:body] = translate_return(fn_body, true)
     fn_dict[:name] = expct1_pos_name
     fn_expr_expct1_pos = MacroTools.combinedef(fn_dict)
+    fn_expr_expct1_pos = Turing.DynamicPPL.model(fn_expr_expct1_pos, true)
 
     fn_dict[:body] = translate_return(fn_body, false)
     fn_dict[:name] = expct1_neg_name
     fn_expr_expct1_neg = MacroTools.combinedef(fn_dict)
+    fn_expr_expct1_neg = Turing.DynamicPPL.model(fn_expr_expct1_neg, true)
 
-    return quote
-        Turing.@model($fn_expr_expct1_pos)
+    final_expr = quote
+        $fn_expr_expct1_pos
 
-        Turing.@model($fn_expr_expct1_neg)
+        $fn_expr_expct1_neg
 
-        Turing.@model($fn_expr_expct2)
+        $fn_expr_expct2
 
-        $(esc(fn_name)) = Expectation(
+        $(fn_name) = Expectation(
             $(expct1_pos_name),
             $(expct1_neg_name),
             $(expct2_name)
         )
     end
+    
+    return esc(final_expr)
 end
 
 function translate_return(expr, is_positive_expectation)
