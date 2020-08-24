@@ -269,4 +269,15 @@ Random.seed!(42)
             @test typeof(diag[key]) <: MCMCChains.Chains
         end
     end
+
+    @testset "Multiple Expectations" begin
+        @expectation function expct(y)
+            x ~ Normal(0, 1) 
+            y ~ Normal(x, 1)
+            return x, x^2, x^3
+        end
+
+        @test isa(expct, Array{ExpectationProgramming.Expectation})
+        @test length(expct) == 3
+    end
 end

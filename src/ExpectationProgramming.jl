@@ -1,8 +1,7 @@
 module ExpectationProgramming
 
-# NOTE: Things don't work if we do "import Turing" because of some scoping 
-# behaviour in the macros.
-using Turing
+using Reexport
+@reexport using Turing
 using AnnealedIS
 using Random
 
@@ -35,51 +34,94 @@ function (expct::Expectation)(args...; kwargs...)
     )
 end
 
-# TODO: Handle multiple return values, e.g. return a, b, c
 macro expectation(expr)
     fn_dict = MacroTools.splitdef(expr)
 
     fn_name = fn_dict[:name]
-    expct1_pos_name = gensym(fn_name)
-    expct1_neg_name = gensym(fn_name)
     expct2_name = gensym(fn_name)
 
     fn_dict[:name] = expct2_name
     fn_expr_expct2 = MacroTools.combinedef(fn_dict)
-    fn_expr_expct2 = Turing.DynamicPPL.model(fn_expr_expct2, true)
+    fn_expr_expct2 = Turing.DynamicPPL.model(fn_expr_expct2, false)
 
     fn_body = fn_dict[:body]
-    fn_dict[:body] = translate_return(fn_body, true)
+    pos_bodies = translate_return(fn_body, true)
+    neg_bodies = translate_return(fn_body, false)
+
+    num_expectations = length(pos_bodies)
+    expressions = Array{Expr}(undef, num_expectations+2)
+    arr_name = gensym()
+    expressions[1] =quote
+        $fn_expr_expct2
+    
+        $(arr_name) = Array{Expectation}(undef, $num_expectations)
+    end 
+
+    for i in 1:num_expectations
+        expct1_pos_name = gensym(fn_name)
+        expct1_neg_name = gensym(fn_name)
+
+        fn_dict[:body] = pos_bodies[i]
     fn_dict[:name] = expct1_pos_name
     fn_expr_expct1_pos = MacroTools.combinedef(fn_dict)
-    fn_expr_expct1_pos = Turing.DynamicPPL.model(fn_expr_expct1_pos, true)
+        fn_expr_expct1_pos = Turing.DynamicPPL.model(fn_expr_expct1_pos, false)
 
-    fn_dict[:body] = translate_return(fn_body, false)
+        fn_dict[:body] = neg_bodies[i]
     fn_dict[:name] = expct1_neg_name
     fn_expr_expct1_neg = MacroTools.combinedef(fn_dict)
-    fn_expr_expct1_neg = Turing.DynamicPPL.model(fn_expr_expct1_neg, true)
+        fn_expr_expct1_neg = Turing.DynamicPPL.model(fn_expr_expct1_neg, false)
 
-    final_expr = quote
+        expressions[i+1] = quote
         $fn_expr_expct1_pos
 
         $fn_expr_expct1_neg
 
-        $fn_expr_expct2
-
-        $(fn_name) = Expectation(
+            $(arr_name)[$i] = Expectation(
             $(expct1_pos_name),
             $(expct1_neg_name),
             $(expct2_name)
         )
     end
+    end
+
+    if num_expectations == 1
+        expressions[end] = quote
+            $(fn_name) = $(arr_name)[1]
+        end
+    else
+        expressions[end] = quote 
+            $(fn_name) = $(arr_name)
+        end
+    end
+
+    final_expr = Expr(:block, expressions...)
     
     return esc(final_expr)
 end
 
 function translate_return(expr, is_positive_expectation)
+    num_expectations = 0
+    # NOTE: We assume that all return statements have the same number of returns
     MacroTools.postwalk(expr) do e
         if MacroTools.@capture(e, return r_)
+            if isa(r, Expr) && r.head == :tuple
+                num_expectations = length(r.args)
+            else
+                num_expectations = 1
+            end
+        else
+            e
+        end
+    end
+
+    expressions = Array{Expr}(undef, num_expectations)
+    for i in 1:num_expectations
+        expressions[i] = MacroTools.postwalk(expr) do e
+            if MacroTools.@capture(e, return r_)
             tmp_var = gensym()
+                if num_expectations > 1
+                    r = r.args[i]
+                end
             # NOTE: The compiler is smart enough to remove the if condition.
             # TODO: Possibly use the macro @addlogp!() to get rid of warning
             quote
@@ -97,6 +139,10 @@ function translate_return(expr, is_positive_expectation)
             e
         end
     end
+end
+
+    # Return an array of expressions
+    return expressions
 end
 
 struct TABI{S<:Turing.InferenceAlgorithm,T<:Turing.InferenceAlgorithm,U<:Turing.InferenceAlgorithm}
