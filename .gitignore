@@ -9,3 +9,5 @@ Manifest.toml
 
 # Saved data
 *.jld
+*.jls
+*.log
