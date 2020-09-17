@@ -6,11 +6,11 @@ version = "0.1.0"
 [deps]
 AnnealedIS = "702945e5-455b-4f29-b6c0-590068f81164"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [compat]
 julia = "1"
-Turing = "0.13"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

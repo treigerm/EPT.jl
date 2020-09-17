@@ -1,0 +1,6 @@
+[deps]
+AnnealedIS = "702945e5-455b-4f29-b6c0-590068f81164"
+ExpectationProgramming = "95b80948-11eb-44eb-a4fc-6033ed68ba79"
+LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
+ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
