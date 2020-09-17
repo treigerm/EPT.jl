@@ -9,5 +9,8 @@ Manifest.toml
 
 # Saved data
 *.jld
+*.jld2
 *.jls
 *.log
+
+.ipynb_checkpoints
