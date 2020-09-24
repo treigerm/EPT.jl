@@ -62,26 +62,26 @@ macro expectation(expr)
         expct1_neg_name = gensym(fn_name)
 
         fn_dict[:body] = pos_bodies[i]
-    fn_dict[:name] = expct1_pos_name
-    fn_expr_expct1_pos = MacroTools.combinedef(fn_dict)
+        fn_dict[:name] = expct1_pos_name
+        fn_expr_expct1_pos = MacroTools.combinedef(fn_dict)
         fn_expr_expct1_pos = Turing.DynamicPPL.model(fn_expr_expct1_pos, false)
 
         fn_dict[:body] = neg_bodies[i]
-    fn_dict[:name] = expct1_neg_name
-    fn_expr_expct1_neg = MacroTools.combinedef(fn_dict)
+        fn_dict[:name] = expct1_neg_name
+        fn_expr_expct1_neg = MacroTools.combinedef(fn_dict)
         fn_expr_expct1_neg = Turing.DynamicPPL.model(fn_expr_expct1_neg, false)
 
         expressions[i+1] = quote
-        $fn_expr_expct1_pos
-
-        $fn_expr_expct1_neg
-
+            $fn_expr_expct1_pos
+    
+            $fn_expr_expct1_neg
+    
             $(arr_name)[$i] = Expectation(
-            $(expct1_pos_name),
-            $(expct1_neg_name),
-            $(expct2_name)
-        )
-    end
+                $(expct1_pos_name),
+                $(expct1_neg_name),
+                $(expct2_name)
+            )
+        end
     end
 
     if num_expectations == 1
@@ -118,28 +118,28 @@ function translate_return(expr, is_positive_expectation)
     for i in 1:num_expectations
         expressions[i] = MacroTools.postwalk(expr) do e
             if MacroTools.@capture(e, return r_)
-            tmp_var = gensym()
+                tmp_var = gensym()
                 if num_expectations > 1
                     r = r.args[i]
                 end
-            # NOTE: The compiler is smart enough to remove the if condition.
-            # TODO: Possibly use the macro @addlogp!() to get rid of warning
-            quote
-                $(tmp_var) = $r
-                if _context isa Turing.DefaultContext
-                if $is_positive_expectation
-                    Turing.acclogp!(_varinfo, log(max($(tmp_var), 0)))
-                else
-                    Turing.acclogp!(_varinfo, log(-min($(tmp_var), 0)))
+                # NOTE: The compiler is smart enough to remove the if condition.
+                # TODO: Possibly use the macro @addlogp!() to get rid of warning
+                quote
+                    $(tmp_var) = $r
+                    if _context isa Turing.DefaultContext
+                        if $is_positive_expectation
+                            Turing.acclogp!(_varinfo, log(max($(tmp_var), 0)))
+                        else
+                            Turing.acclogp!(_varinfo, log(-min($(tmp_var), 0)))
+                        end
+                    end
+                    return $(tmp_var)
                 end
-                end
-                return $(tmp_var)
+            else
+                e
             end
-        else
-            e
         end
     end
-end
 
     # Return an array of expressions
     return expressions
@@ -159,6 +159,11 @@ function TABI(estimation_alg::T) where {T<:Turing.InferenceAlgorithm}
     )
 end
 
+function Base.show(io::IO, tabi::TABI)
+    s = "TABI(\n\t$(tabi.Z1_pos_alg),\n\t$(tabi.Z1_neg_alg),\n\t$(tabi.Z2_alg)\n)"
+    print(io, s)
+end
+
 struct AIS{T<:AnnealedIS.RejectionSampler} <: Turing.InferenceAlgorithm
     num_samples::Int
     num_annealing_dists::Int
@@ -172,15 +177,14 @@ end
 
 function Distributions.estimate(
     expct::Expectation, 
-    alg::TABI{AIS{T},AIS{T},AIS{T}}; 
+    alg::TABI{T,T,T}; 
     kwargs...
-) where {T<:AnnealedIS.RejectionSampler}
-    # TODO: Ensure function is type-stable
+) where {T<:AIS}
     ais = AnnealedISSampler(
         expct.gamma2, 
         alg.Z2_alg.num_annealing_dists,
         alg.Z2_alg.rejection_sampler
-)
+    )
     prior_density = ais.prior_density
     Z2_diagnostics = estimate_normalisation_constant(
         ais,
@@ -190,19 +194,19 @@ function Distributions.estimate(
     Z2 = Z2_diagnostics[:Z_estimate]
 
     if alg.Z1_pos_alg.num_samples > 0
-    ais = AnnealedISSampler(
-        rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_pos), 
-        prior_density,
-        AnnealedIS.make_log_joint_density(expct.gamma1_pos),
+        ais = AnnealedISSampler(
+            rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_pos), 
+            prior_density,
+            AnnealedIS.make_log_joint_density(expct.gamma1_pos),
             alg.Z1_pos_alg.num_annealing_dists,
             alg.Z1_pos_alg.rejection_sampler
-    )
-    Z1_positive_diagnostics = estimate_normalisation_constant(
+        )
+        Z1_positive_diagnostics = estimate_normalisation_constant(
             ais,
             alg.Z1_pos_alg.num_samples;
-        kwargs...
-    )
-    Z1_positive = Z1_positive_diagnostics[:Z_estimate]
+            kwargs...
+        )
+        Z1_positive = Z1_positive_diagnostics[:Z_estimate]
     else
         Z1_positive = 0
         Z1_positive_diagnostics = Dict()
@@ -210,19 +214,19 @@ function Distributions.estimate(
     end
 
     if alg.Z1_neg_alg.num_samples > 0
-    ais = AnnealedISSampler(
-        rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_neg), 
-        prior_density,
-        AnnealedIS.make_log_joint_density(expct.gamma1_neg),
+        ais = AnnealedISSampler(
+            rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_neg), 
+            prior_density,
+            AnnealedIS.make_log_joint_density(expct.gamma1_neg),
             alg.Z1_neg_alg.num_annealing_dists,
             alg.Z1_neg_alg.rejection_sampler
-    )
-    Z1_negative_diagnostics = estimate_normalisation_constant(
+        )
+        Z1_negative_diagnostics = estimate_normalisation_constant(
             ais,
             alg.Z1_neg_alg.num_samples;
-        kwargs...
-    )
-    Z1_negative = Z1_negative_diagnostics[:Z_estimate]
+            kwargs...
+        )
+        Z1_negative = Z1_negative_diagnostics[:Z_estimate]
     else
         Z1_negative = 0
         Z1_negative_diagnostics = Dict()
@@ -260,59 +264,12 @@ function Distributions.estimate(
     )
 end
 
-    ais = AnnealedISSampler(expct.gamma2, alg.estimation_alg.num_annealing_dists)
-    prior_density = ais.prior_density
-    samples, Z2_diagnostics = ais_sample(
-        Random.GLOBAL_RNG, 
-        ais, 
-        alg.estimation_alg.num_samples;
-        store_intermediate_samples=store_intermediate_samples
-    )
-    Z2_diagnostics[:samples] = samples
-    Z2 = normalisation_constant(samples)
-
-    ais = AnnealedISSampler(
-        rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_pos), 
-        prior_density,
-        AnnealedIS.make_log_joint_density(expct.gamma1_pos),
-        alg.estimation_alg.num_annealing_dists
-    )
-    samples, Z1_positive_diagnostics = ais_sample(
-        Random.GLOBAL_RNG, 
-        ais, 
-        alg.estimation_alg.num_samples;
-        store_intermediate_samples=store_intermediate_samples
-    )
-    Z1_positive_diagnostics[:samples] = samples
-    Z1_positive = normalisation_constant(samples)
-
-    ais = AnnealedISSampler(
-        rng -> AnnealedIS.sample_from_prior(rng, expct.gamma1_neg),
-        prior_density,
-        AnnealedIS.make_log_joint_density(expct.gamma1_neg),
-        alg.estimation_alg.num_annealing_dists
-    )
-    samples, Z1_negative_diagnostics = ais_sample(
-        Random.GLOBAL_RNG, 
-        ais, 
-        alg.estimation_alg.num_samples;
-        store_intermediate_samples=store_intermediate_samples
-    )
-    Z1_negative_diagnostics[:samples] = samples
-    Z1_negative = normalisation_constant(samples)
-
-    return (Z1_positive - Z1_negative) / Z2, (
-        Z2_info = Z2_diagnostics,
-        Z1_positive_info = Z1_positive_diagnostics,
-        Z1_negative_info = Z1_negative_diagnostics,
-    )
-end
 function estimate_normalisation_constant(
     model::Turing.Model,
     alg::TuringAlgorithm;
     kwargs...
 )
-    Z_estimate = 0
+    Z_estimate = 0.0
     chain = nothing
     if alg.num_samples > 0
         chain = sample(
