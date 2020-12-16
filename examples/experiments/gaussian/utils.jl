@@ -107,6 +107,80 @@ function convergence_plot(
     return p, p2
 end
 
+function convergence_plot2(
+    taanis_results, 
+    ais_results,
+    ais_f,
+    ais_factor,
+    true_expectation_value;
+    suffix="",
+    thinning=1
+)
+    num_runs = length(taanis_results)
+    num_samples_ais = length(ais_results[1][:Z][:samples])
+    # TODO: Control number of samples when Z2 = 0.
+    num_samples_taanis = Int(num_samples_ais / ais_factor)
+    taanis_intermediates = Array{Float64}(undef, num_runs, num_samples_taanis)
+    ais_intermediates = Array{Float64}(undef, num_runs, num_samples_ais)
+
+    for i in 1:num_runs
+        ais_samples = ais_results[i][:Z][:samples]
+        ais_intermediates[i,:] = expectations(ais_samples, ais_f)
+
+        Zs = (
+            Z1_positive_info = zeros(Float64, num_samples_taanis),
+            Z1_negative_info = zeros(Float64, num_samples_taanis),
+            Z2_info = Array{Float64}(undef, num_samples_taanis)
+        )
+        for k in keys(taanis_results[i])
+            samples = taanis_results[i][k][:samples]
+            Zs[k][:] = normalisation_constants(samples)
+        end
+        taanis_intermediates[i,:] = (
+            Zs[:Z1_positive_info] .- Zs[:Z1_negative_info]) ./ Zs[:Z2_info]
+    end 
+
+    ais_intermediates = ais_intermediates[:,1:thinning:end]
+    taanis_intermediates = taanis_intermediates[:,1:thinning:end]
+
+    ais_errors = relative_squared_error.(
+        ais_intermediates, true_expectation_value
+    )
+    taanis_errors = relative_squared_error.(
+        taanis_intermediates, true_expectation_value
+    )
+
+    mds, qs = get_median_and_quantiles(taanis_errors)
+    p2 = plot(
+        (1:thinning:num_samples_taanis) * ais_factor, 
+        mds,
+        ribbon=[mds.-qs[1,:],qs[2,:]-mds],
+        label="TAAnIS",
+        legend=:bottomleft,
+        legendfontsize=10,
+        xscale=:log10,
+        yscale=:log10, 
+        thickness_scaling=1.7,
+        xlims=(10,10^4),
+        ylims=(10^(-6.5),1),
+        xticks=[10, 100, 1_000, 10_000],
+        yticks=[1, 0.01, 0.0001, 0.000001]
+    )
+    mds, qs = get_median_and_quantiles(ais_errors)
+    plot!(
+        p2,
+        1:thinning:num_samples_ais, 
+        mds,
+        ribbon=[mds.-qs[1,:],qs[2,:]-mds],
+        label="AnIS"
+    )
+    mds, qs = get_median_and_quantiles(taanis_errors)
+    xlabel!(p2, "Number of Samples")
+    ylabel!(p2, "RSE")
+
+    return p2
+end
+
 function relative_squared_error(x_hat, true_x) 
     return (x_hat - true_x)^2 / true_x^2
 end

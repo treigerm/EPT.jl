@@ -131,6 +131,188 @@ function est_exp(chn, f)
     return weighted_sum / normalisation
 end
 
+function relative_squared_error(mu_true, mu_hat)
+    return (mu_true - mu_hat)^2 / mu_true^2
+end
+
+function convergence_plot(Z1_chn, Z2_chn, f, ground_truth)
+    # TODO: Thinning of output.
+    Z1_ws = exp.(vec(Array(Z1_chn[:log_weight])))
+    Z2_ws = exp.(vec(Array(Z2_chn[:log_weight])))
+
+    num_samples = length(Z1_ws)
+    #resampled_ixs = StatsBase.sample(1:num_samples, pweights(Z2_ws), num_samples)
+    #Z2_ws = Z2_ws[resampled_ixs]
+
+    # NOTE: Usually we have to divide each estimate by the number of samples used 
+    # but because those "normalisations" cancel in our downstream calculations we 
+    # avoid them.
+    Z1s_unnormalised = cumsum(Z1_ws)
+    Z2s_unnormalised = cumsum(Z2_ws)
+
+    tabi_ests = Z1s_unnormalised ./ Z2s_unnormalised
+
+    i₀ = vec(Array(Z2_chn[:i₀]))
+    β = vec(Array(Z2_chn[:β]))
+    anis_ests = cumsum(map(zip(Z2_ws, i₀, β)) do (w, i, b)
+        w * f(i, b)
+    end)
+    anis_ests = anis_ests ./ Z2s_unnormalised
+    #i₀ = Array(Z2_chn[:i₀])[resampled_ixs]
+    #β = Array(Z2_chn[:β])[resampled_ixs]
+    #anis_ests = cumsum(map(zip(ones(num_samples), i₀, β)) do (w, i, b)
+    #    w * f(i, b)
+    #end)
+    #anis_ests = anis_ests ./ (1:num_samples)
+
+    tabi_rserror = relative_squared_error.(ground_truth, tabi_ests)
+    anis_rserror = relative_squared_error.(ground_truth, anis_ests)
+
+    ixs = 50:num_samples
+    taanis_ixs = 2 * ixs # TAAnIS uses twice the number of samples
+    error_plot = plot(
+        taanis_ixs, 
+        tabi_rserror[ixs], 
+        label="TAAnIS", 
+        yscale=:log10,
+        xlabel="Number of Samples",
+        ylabel="Relative Squared Error"
+    )
+    plot!(error_plot, ixs, anis_rserror[ixs], label="AnIS")
+
+    ground_truth_plot = plot(
+        taanis_ixs,
+        tabi_ests[ixs],
+        label="TAAnIS"
+    )
+    plot!(
+        ground_truth_plot,
+        ixs,
+        anis_ests[ixs],
+        label="AnIS"
+    )
+    plot!(
+        ground_truth_plot,
+        [1, 2*num_samples],
+        repeat([ground_truth], 2),
+        label="GT"
+    )
+    return error_plot, ground_truth_plot
+end
+
+function effective_sample_size(log_weights)
+    denominator = logsumexp(2 * log_weights)
+    numerator = 2 * logsumexp(log_weights)
+    return exp(numerator - denominator)
+end
+
+function plot_is_samples(samples, log_weights)
+    return scatter(
+        samples,
+        log_weights, 
+        markersize=3, 
+        markeralpha=0.4, 
+        legend=false,
+        xlabel="beta",
+        ylabel="log weight",
+        xlims=[0,2]
+    )
+end
+
+function post_hoc_analysis(result_folder, true_expectation_value, cost_fn; true_gamma=0.25)
+    results = load(joinpath(result_folder, "results.jld2"))
+
+    ep, cp = convergence_plot(
+        results["ode_tabi"][:Z1_positive_info],
+        results["ode_tabi"][:Z2_info],
+        (i, b) -> cost_fn(b, true_gamma),
+        true_expectation_value
+    )
+    savefig(ep, joinpath(result_folder, "error_plot.png"))
+    savefig(cp, joinpath(result_folder, "convergence_plot.png"))
+
+    Z1_lws = vec(Array(results["ode_tabi"][:Z1_positive_info][:log_weight]))
+    Z1_betas = vec(Array(results["ode_tabi"][:Z1_positive_info][:β]))
+
+    Z2_lws = vec(Array(results["ode_tabi"][:Z2_info][:log_weight]))
+    Z2_betas = vec(Array(results["ode_tabi"][:Z2_info][:β]))
+
+    Z1_ess = effective_sample_size(Z1_lws)
+    Z2_ess = effective_sample_size(Z2_lws)
+
+    Z2_ess_retargeted = effective_sample_size(
+        Z2_lws .+ cost_fn.(Z2_betas, true_gamma)
+    )
+    Z1_ess_retargeted = effective_sample_size(
+        Z1_lws .- cost_fn.(Z1_betas, true_gamma)
+    )
+
+    @show Z1_ess Z1_ess_retargeted
+    @show Z2_ess Z2_ess_retargeted
+
+    num_samples = length(Z2_lws)
+    Z2_weight_normalisation = results["ode_tabi"][:Z2_info].logevidence + log(num_samples)
+    Z1_weight_normalisation = results["ode_tabi"][:Z1_positive_info].logevidence + log(num_samples)
+    savefig(
+        plot_is_samples(Z2_betas, Z2_lws .- Z2_weight_normalisation), 
+        joinpath(result_folder, "Z2_betas.png")
+    )
+    savefig(
+        plot_is_samples(Z1_betas, Z1_lws .- Z1_weight_normalisation), 
+        joinpath(result_folder, "Z1_betas.png")
+    )
+end
+
+"""
+exfolders = [
+    "02102020_082708_1234_anis_1000_samples",
+    "02102020_165012_1235_anis_1000_samples",
+    "02102020_165058_1236_anis_1000_samples",
+    "03102020_122531_1237_anis_1000_samples",
+    "03102020_122626_1238_anis_1000_samples",
+    "03102020_123813_1239_anis_1000_samples",
+]
+"""
+
+function combine_results(
+    result_folder_root, 
+    experiment_folders, 
+    true_expectation_value,
+    cost_fn;
+    true_gamma=0.25)
+    # Load all experiments
+    Z1_chns = Chains[]
+    Z2_chns = Chains[]
+    for ef in experiment_folders
+        results = load(joinpath(result_folder_root, ef, "results.jld2"))
+        push!(Z1_chns, results["ode_tabi"][:Z1_positive_info])
+        push!(Z2_chns, results["ode_tabi"][:Z2_info])
+    end
+
+    # Combine MCMCChains
+    Z1_chn = chainscat(Z1_chns...)
+    Z2_chn = chainscat(Z2_chns...)
+
+    #results = load(joinpath(
+    #    result_folder_root, 
+    #    experiment_folders[1], 
+    #    "results.jld2"
+    #))
+
+    #results["ode_tabi"][:Z1_positive_info] = Z1_chn
+    #results["ode_tabi"][:Z2_info] = Z2_chn
+
+    ep, cp = convergence_plot(
+        Z1_chn,
+        Z2_chn,
+        cost_fn,
+        true_expectation_value
+    )
+    savefig(ep, joinpath(result_folder_root, "combined_samples", "error_plot.png"))
+    savefig(cp, joinpath(result_folder_root, "combined_samples", "convergence_plot.png"))
+    return nothing
+end
+
 function process_results(
     result_folder; 
     ode_tabi, 

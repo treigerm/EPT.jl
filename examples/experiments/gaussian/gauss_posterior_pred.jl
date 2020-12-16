@@ -13,16 +13,17 @@ using Statistics: mean
 using LinearAlgebra: I
 
 const NUM_ANNEALING_DISTS = 100
-const NUM_SAMPLES = 10_000
-const NUM_RUNS = 2
+const NUM_SAMPLES = 100
+const NUM_RUNS = 10
 
 const FX = :gauss
-const Y_OBSERVED = -5
+const Y_OBSERVED = -2
+const DIMENSION = 10
 
 const RANDOM_SEED = 42
 
-const EXPERIMENT_NAME = "$(RANDOM_SEED)_test_gauss"
-const RESULTS_FOLDER = "results"
+const EXPERIMENT_NAME = "test_intermediate_$(RANDOM_SEED)_samples$(NUM_SAMPLES)_y$(-Y_OBSERVED)_D$(DIMENSION)"
+const RESULTS_FOLDER = "/data/reichelt/tabi/gaussian"
 const RESULTS_FILE = "results.jld"
 
 Random.seed!(RANDOM_SEED) 
@@ -71,7 +72,8 @@ function main(
     num_samples, 
     num_runs, 
     fx,
-    yval
+    yval,
+    dimension
 )
     result_folder = make_experiment_folder(RESULTS_FOLDER, experiment_name)
     logger = TeeLogger(
@@ -80,24 +82,27 @@ function main(
     )
 
     @expectation function expct(y)
-        x ~ Normal(0, 1) 
-        y ~ Normal(x, 1)
-        return pdf(Normal(-y, sqrt(0.5)), x)
+        x ~ MvNormal(zeros(length(y)), I) 
+        y ~ MvNormal(x, I)
+        #return pdf(MvNormal(-y, sqrt(0.5)*I), x)
+        return pdf(MvNormal(-y, 0.5*I), x)
     end
 
+    yval = yval * ones(dimension) / sqrt(dimension)
     expct_conditioned = expct(yval)
 
     # Code from Sheh
     # true_expectation_value = exp(
     #     -0.5 * log(2*π) - 0.5 * (-yval - 0.5 * yval)^2
     # )
-    true_expectation_value = pdf(Normal(yval / 2, 1), -yval)
+    true_expectation_value = pdf(MvNormal(yval / 2, I), -yval)
     true_Zs = compute_true_Zs(
-        yval,
-        x -> pdf(Normal(-yval, sqrt(0.5)), x)
+        yval[1],
+        x -> pdf(Normal(-yval[1], sqrt(0.5)), x)
     )
 
-    ais_f = x -> pdf(Normal(-yval, sqrt(0.5)), x[:x])
+    #ais_f = x -> pdf(MvNormal(-yval, sqrt(0.5)*I), x[:x])
+    ais_f = x -> pdf(MvNormal(-yval, 0.5*I), x[:x])
     ais_factor = 2
 
     algorithms = [
@@ -112,14 +117,20 @@ function main(
         diagnostics[name] = Array{NamedTuple,1}(undef, num_runs)
     end
 
-    @threads for i in 1:num_runs
+    #@threads for i in 1:num_runs
+    @time begin
+    for i in 1:num_runs
         println("Run $i")
         tabi = TABI(
             AIS(num_samples, num_annealing_dists, SimpleRejection()),
             AIS(0, 0, SimpleRejection()),
             AIS(num_samples, num_annealing_dists, SimpleRejection())
         )
-        results[:AIS][i], diagnostics[:AIS][i] = estimate(expct_conditioned, tabi)
+        results[:AIS][i], diagnostics[:AIS][i] = estimate(
+            expct_conditioned, 
+            tabi;
+            store_intermediate_samples=true
+        )
         # Remove Z1_negative_info field because it is not used.
         diagnostics[:AIS][i] = Base.structdiff(
             diagnostics[:AIS][i], (Z1_negative_info=Dict(),)
@@ -132,6 +143,7 @@ function main(
         results[:StandardAIS][i] = AnnealedIS.estimate_expectation(
             samples, ais_f
         )
+    end
     end
 
     # Save results so they can be used later.
@@ -158,4 +170,12 @@ function main(
     savefig(error_plot, joinpath(result_folder, "errors.png"))
 end
 
-main(EXPERIMENT_NAME, NUM_ANNEALING_DISTS, NUM_SAMPLES, NUM_RUNS, FX, Y_OBSERVED)
+main(
+    EXPERIMENT_NAME, 
+    NUM_ANNEALING_DISTS, 
+    NUM_SAMPLES, 
+    NUM_RUNS, 
+    FX, 
+    Y_OBSERVED,
+    DIMENSION
+)

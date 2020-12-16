@@ -130,6 +130,8 @@ function convergence_plot(
         ribbon=[mds.-qs[1,:],qs[2,:]-mds],
         label="TAAnIS"
     )
+    xlabel!(p2, "Number of Samples")
+    ylabel!(p2, "Relative Squared Error")
     savefig(p2, "errors$(suffix).png")
 end
 
@@ -222,9 +224,10 @@ function make_latex_table_ess(diagnostics)
     for (row_ix, (name, diag_runs)) in enumerate(pairs(diagnostics))
         alg_names[row_ix] = string(name)
         for n in keys(diag_runs[1])
-            ess_median = round(median(map(x -> x[n][:ess], diag_runs)), digits=2)
+            ess_mean = round(mean(map(x -> x[n][:ess], diag_runs)), digits=2)
+            ess_std = round(std(map(x -> x[n][:ess], diag_runs)), digits=2)
             col_ix = findall(x -> x == string(n), columns)[1]
-            values[row_ix,col_ix] = "\$$(ess_median)\$"
+            values[row_ix,col_ix] = "\$$(ess_mean) \\pm $(ess_std)\$"
             #ess_quantiles = round.(quantile(
             #    map(x -> x[n][:ess], diag_runs), [0.25, 0.75]
             #), digits=2)
@@ -294,7 +297,6 @@ function get_latex_tables(filename)
     true_Zs, true_expectation_value = d["true_Zs"], d["true_expectation_value"]
     results, diagnostics = d["results"], d["diagnostics"]
     fx = d["fx"]
-    ais_factor = d["ais_factor"]
 
     println("Effective Sample Size:\n")
     make_latex_table_ess(diagnostics)
@@ -310,7 +312,11 @@ function load_and_analyse(filename; suffix=nothing)
     true_Zs, true_expectation_value = d["true_Zs"], d["true_expectation_value"]
     results, diagnostics = d["results"], d["diagnostics"]
     fx = d["fx"]
-    ais_factor = d["ais_factor"]
+    ais_factor = if haskey(d, "ais_factor")
+        d["ais_factor"]
+    else
+        3 # This is left to be backwards compatible. Old result files didn't store the ais_factor key.
+    end
     if isnothing(suffix)
         suffix = "_$(string(fx))"
     end

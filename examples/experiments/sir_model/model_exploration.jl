@@ -248,7 +248,7 @@ end
 		return l
 	end
 	
-	phi = 0.5
+	phi = 10
 	variance = sol_X .+ sol_X.^2 ./ phi
 	rs = neg_bin_r.(sol_X, variance)
 	ps = neg_bin_p.(rs, sol_X)
@@ -579,7 +579,7 @@ end
 # ╟─07fc5356-f50a-11ea-0ef1-2dbf0cb60038
 # ╟─2ae8e6f6-f50a-11ea-02b5-19ddd496b7aa
 # ╟─52d0d8ae-f50a-11ea-0939-d95feb97d248
-# ╟─e24e1b1a-f5d0-11ea-10dc-b5e3ba2652ae
+# ╠═e24e1b1a-f5d0-11ea-10dc-b5e3ba2652ae
 # ╠═d3a7154c-f36b-11ea-21f6-1569109c69eb
 # ╠═a2be3cbe-f50d-11ea-2d63-2377fd79d4ce
 # ╠═1de947a6-f5d5-11ea-26f5-d9066e89bbe7

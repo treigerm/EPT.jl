@@ -7,6 +7,8 @@ using AnnealedIS
 using DataFrames
 using StatsPlots
 using StatsFuns: logsumexp, logistic
+using StatsBase
+using LinearAlgebra: dot
 using Logging
 using LoggingExtras
 using AdvancedMH
@@ -16,7 +18,8 @@ using JLD2
 using FileIO
 using Quadrature
 
-Random.seed!(1234)
+const RANDOM_SEED = 1234
+Random.seed!(RANDOM_SEED)
 
 const RESULTS_FOLDER = "results_cost_fn/"
 
@@ -77,15 +80,38 @@ function transition_kernel(prior_sample::T, i) where {T<:Real}
 end
 
 function transition_kernel(prior_sample::NamedTuple, i)
-    return map(x -> transition_kernel(x, i), prior_sample)
+    #return map(x -> transition_kernel(x, i), prior_sample)
+    return (
+        i₀ = Normal(0, 1),
+        β = Normal(0, 0.1)
+    )
 end
 
 function cost_fn(β, γ; k=1) 
     return 1_000_000 * logistic(k*(10*base_reproduction_rate(β, γ) - 10))
 end
 
+cost_fn2(β, γ; k=1) = 1_000_000_000_000 * logistic(k*(10*base_reproduction_rate(β, γ) - 30))
+
 neg_bin_r(mean, var) = mean^2 / (var - mean)
 neg_bin_p(r, mean) = r / (r + mean)
+
+function neg_bin_params(mean, var)
+    r = neg_bin_r(mean, var)
+    return r, neg_bin_p(r, mean)
+end
+
+neg_bin_params2(mean, phi) = neg_bin_params(mean, mean + mean^2 / phi)
+
+function is_sampling(logjoint, qi, qb, num_samples)
+    qi_samples = rand(qi, num_samples)
+    qb_samples = rand(qb, num_samples)
+
+    is_weights = logjoint.(zip(qi_samples, qb_samples)) - (logpdf.(qi, qi_samples) .+ logpdf.(qb, qb_samples))
+    normalised_is_weights = is_weights .- logsumexp(is_weights)
+    
+    return normalised_is_weights, qi_samples, qb_samples
+end
 
 function main(
     experiment_name; 
@@ -93,7 +119,8 @@ function main(
     sample_nuts=false,
     sample_mh=false,
     plot_joint_and_prior=false,
-    sample_mh_intermediate=false
+    sample_mh_intermediate=false,
+    sample_is=false
 )
     tmax = 15.0
     tspan = (0.0,tmax)
@@ -116,13 +143,14 @@ function main(
 
     C = Array(sol_ode)[4,:] # Cumulative cases
     X = C[2:end] - C[1:(end-1)]
-    Y = rand.(Poisson.(X))
+    #Y = rand.(Poisson.(X))
+    Y = rand.([NegativeBinomial(neg_bin_params2(m, 10)...) for m in X])
 
     @expectation bayes_sir(y) = begin
         # Calculate number of timepoints
         l = length(y)
         i₀ ~ truncated(Normal(10, 10), 0, total_population/10)
-        β ~ truncated(Normal(1, 0.5), 0, Inf)
+        β ~ truncated(Normal(2, 1.5), 0, Inf)
         I = i₀ * 10
         u0=[total_population-I, I, 0.0, 0.0]
         p=[β, 0.25]
@@ -133,8 +161,9 @@ function main(
         sol_X = sol_C[2:end] - sol_C[1:(end-1)]
         
         l = length(y)
-        if any(sol_X .< 0)
+        if any(sol_X .< 0) || length(sol_X) != l 
             # Check if we have negative cumulative cases
+            @warn "Negative cumulative cases" β i₀
             Turing.acclogp!(_varinfo, -Inf)
             return l
         end
@@ -143,7 +172,7 @@ function main(
         variance = sol_X .+ sol_X.^2 ./ phi
         rs = neg_bin_r.(sol_X, variance)
         ps = neg_bin_p.(rs, sol_X)
-        if !all(rs .> 0)
+        if !all(rs .> 0) || !all(0 .< ps .<= 1)
             Turing.acclogp!(_varinfo, -Inf)
             @warn "This shouldn't happen" β i₀
             return l
@@ -151,7 +180,7 @@ function main(
         
         y ~ arraydist(NegativeBinomial.(rs, ps))
         #y ~ arraydist([Poisson(x) for x in sol_X])
-        return cost_fn(β, γ)
+        return cost_fn2(β, γ)
     end
 
     result_folder = make_experiment_folder(experiment_name)
@@ -161,18 +190,30 @@ function main(
     )
 
     if plot_prior_pred
-        ode_prior = sample(bayes_sir(Y).gamma2, Prior(), 100)
+        ode_prior = sample(bayes_sir(Y).gamma2, Prior(), 1000)
         savefig(
             plot_predictive(obstimes, X, Y, ode_prior), 
             joinpath(result_folder, "prior_pred.png")
+        )
+        savefig(
+            bar(
+                obstimes, Y, xlabel="Day", ylabel="Number of cases", 
+                legend=false,
+                xtickfontsize=15,
+                ytickfontsize=15,
+                guidefontsize=15),
+            joinpath(result_folder, "observed_data.pdf")
         )
     end
 
     if sample_nuts
         @time begin
-        ode_nuts = sample(
-            bayes_sir(Y).gamma2, Turing.NUTS(0.65), 200; discard_adapt=false
-        )
+        ode_nuts = mapreduce(c -> sample(
+            bayes_sir(Y).gamma2, 
+            Turing.NUTS(0.65), 
+            1_000; 
+            discard_adapt=true
+        ), chainscat, 1:1)
         end
         savefig(
             plot_predictive(obstimes, X, Y, ode_nuts), 
@@ -190,6 +231,47 @@ function main(
         return
     end
 
+    if sample_is
+        num_samples = Int(1e6)
+
+        tm = bayes_sir(Y).gamma2
+        spl = Turing.Sampler(Turing.NUTS(0.65), tm)
+        joint_dens = AnnealedIS.gen_logjoint(spl.state.vi, tm, spl)
+
+        qi = truncated(Normal(10, 10), 0, total_population/10)
+        qb = truncated(Normal(1.5, 1.5), 0, Inf)
+
+        @time begin
+        log_weights, qi_samples, qb_samples = is_sampling(
+            joint_dens, qi, qb, num_samples
+        )
+        end
+
+        costs = cost_fn2.(qb_samples, γ)
+
+        ess = 1 / exp(logsumexp(2 * log_weights))
+        target_weights = log_weights .+ log.(costs)
+        ess_target = exp(2 * logsumexp(target_weights) - logsumexp(2 * target_weights))
+
+        exp_estimate = dot(exp.(log_weights), costs)
+        with_logger(logger) do 
+            @info "Proposals:" qi qb
+            @info "Number of samples: $num_samples"
+            @info "ESS p(x|y): $ess"
+            @info "ESS p(x|y)f(x): $ess_target"
+            @info "Expectation estimate: $exp_estimate"
+        end
+
+        save(
+            joinpath(result_folder, "results.jld2"),
+            "cost_fn", cost_fn2,
+            "log_weights", log_weights,
+            "qi_samples", qi_samples,
+            "qb_samples", qb_samples
+        )
+        return
+    end
+
     if sample_mh
         mh = MH(
             :i₀ => x -> Normal(x, 0.0001),
@@ -200,48 +282,6 @@ function main(
             plot_predictive(obstimes, X, Y, ode_mh),
             joinpath(result_folder, "mh_post_pred.png")
         )
-        savefig(
-            plot(ode_mh),
-            joinpath(result_folder, "mh_traceplot.png")
-        )
-        with_logger(logger) do
-            @info "Chain info:" ode_mh
-        end
-        return
-    end
-
-    if sample_mh_intermediate
-        mh = MH(
-            :i₀ => x -> Normal(x, 0.1),
-            :β => x -> Normal(x, 0.1)
-        )
-        betas_begin = (geomspace(1, 1001, 200) .- 1) ./ 100000
-        betas = vcat(betas_begin, [1.0])
-        anis_alg = AnIS(betas, transition_kernel, SimpleRejection())
-        anis_sampler = AnnealedISSampler(bayes_sir(Y).gamma2, anis_alg)
-
-        prior_sample = AnnealedIS.sample_from_prior(
-            Random.GLOBAL_RNG, bayes_sir(Y).gamma2
-        )
-        density(params) = AnnealedIS.logdensity(anis_sampler, 2, params)
-        model = AdvancedMH.DensityModel(density)
-        spl = AdvancedMH.RWMH((
-            i₀ = Normal(0, 0.1),
-            β = Normal(0, 0.1)
-        ))
-        num_steps = 1000
-        ode_mh = AdvancedMH.sample(
-            model, spl, num_steps; init_params=prior_sample
-        )
-        # Convert to MCMCChains
-        vals = map(ode_mh) do t
-            [t.params[:i₀], t.params[:β], t.lp]
-        end
-        ode_mh = Chains(vals, ["i₀", "β", "lp"], (internals=["lp"],))
-        #savefig(
-        #    plot_predictive(obstimes, X, Y, ode_mh),
-        #    joinpath(result_folder, "mh_post_pred.png")
-        #)
         savefig(
             plot(ode_mh),
             joinpath(result_folder, "mh_traceplot.png")
@@ -308,9 +348,10 @@ function main(
         return
     end
 
+    # Calculated with 1_000_000 NUTS samples.
     true_expectation_value = nothing
     
-    num_samples = 50
+    num_samples = 1_000
     #num_annealing_dists = 200
     #anis_alg = AnIS(transition_kernel, num_annealing_dists, SimpleRejection())
     #betas = anis_alg.betas
@@ -320,17 +361,17 @@ function main(
     #betas = vcat(betas_begin, betas_end[2:end])
     # We first create a geometric spacing between 1 and 1001 because directly 
     # doing it between 0 and 1 gives numerical problems.
-    betas = (geomspace(1, 1001, 201) .- 1) ./ 1000
+    betas = (geomspace(1, 1001, 101) .- 1) ./ 1000
     #betas_begin = (geomspace(1, 1001, 990) .- 1) ./ 10_000
     #betas_end = collect(range(0.1, 1, length=12))
     #betas = vcat(betas_begin, betas_end[2:end])
-    anis_alg = AnIS(betas, transition_kernel, RejectionResample())
+    anis_alg = AnIS(betas, transition_kernel, SimpleRejection())
     #anis_alg = IS()
 
     # AnIS with HMC
-    #proposal = AdvancedHMC.StaticTrajectory(AdvancedHMC.Leapfrog(0.005), 10)
+    #proposal = AdvancedHMC.StaticTrajectory(AdvancedHMC.Leapfrog(0.005), 5)
     #proposal = AdvancedHMC.NUTS{MultinomialTS,GeneralisedNoUTurn}(
-    #    AdvancedHMC.Leapfrog(0.005)
+    #    AdvancedHMC.Leapfrog(0.1)
     #)
     #anis_alg = AnISHMC(
     #    betas,
@@ -376,14 +417,15 @@ function main(
         obstimes=obstimes,
         i_0_true=i_0_true,
         β_true=β_true,
-        cost_fn=((i, b) -> cost_fn(b, γ))
+        cost_fn=((i, b) -> cost_fn2(b, γ))
     )
 end
 
 main(
-    "test_anis_informative_prior"; 
+    "$(RANDOM_SEED)_reproduce_anis_1000_samples";
     sample_nuts=false, 
     plot_prior_pred=true, 
+    sample_is=false,
     sample_mh=false,
     plot_joint_and_prior=false,
     sample_mh_intermediate=false
