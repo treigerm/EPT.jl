@@ -12,7 +12,7 @@ export @expectation,
     TABI,
     AIS,
     TuringAlgorithm,
-    estimate,
+    estimate_expectation,
     # Reexports
     RejectionResample,
     SimpleRejection
@@ -149,11 +149,20 @@ struct TABI{S <: Turing.InferenceAlgorithm,T <: Turing.InferenceAlgorithm,U <: T
     Z2_alg::U
 end
 
-function TABI(estimation_alg::T) where {T <: Turing.InferenceAlgorithm}
+function TABI(marginal_likelihood_estimator::T) where {T <: Turing.InferenceAlgorithm}
     return TABI(
-        estimation_alg,
-        estimation_alg,
-        estimation_alg
+        marginal_likelihood_estimator,
+        marginal_likelihood_estimator,
+        marginal_likelihood_estimator 
+    )
+end
+
+# Make marginal_likelihood_estimator a keyword arg.
+function TABI(;marginal_likelihood_estimator::T) where {T <: Turing.InferenceAlgorithm}
+    return TABI(
+        marginal_likelihood_estimator,
+        marginal_likelihood_estimator,
+        marginal_likelihood_estimator 
     )
 end
 
@@ -173,7 +182,7 @@ struct TuringAlgorithm{T <: Turing.InferenceAlgorithm} <: Turing.InferenceAlgori
     num_samples::Int
 end
 
-function Distributions.estimate(
+function estimate_expectation(
     expct::Expectation, 
     alg::TABI{T,T,T}; 
     kwargs...
@@ -238,7 +247,7 @@ function Distributions.estimate(
     )
 end
 
-function Distributions.estimate(
+function estimate_expectation(
     expct::Expectation,
     alg::TABI{T,T,T};
     kwargs...

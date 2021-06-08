@@ -69,7 +69,7 @@ Random.seed!(42)
             AIS(num_annealing_dists, num_samples, SimpleRejection())
         )
 
-        expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
+        expct_estimate, diagnostics = estimate_expectation(expct_conditioned, tabi)
         @test !isnan(expct_estimate)
     end
 
@@ -91,7 +91,7 @@ Random.seed!(42)
     #        AIS(num_samples, num_annealing_dists)
     #    )
 
-    #    expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
+    #    expct_estimate, diagnostics = estimate_expectation(expct_conditioned, tabi)
     #    @test_broken isapprox(expct_estimate, 1.5, atol=1e-2)
     # end
 
@@ -112,7 +112,7 @@ Random.seed!(42)
             AIS(num_samples, num_annealing_dists, SimpleRejection())
         )
 
-        expct_estimate, diagnostics = estimate(
+        expct_estimate, diagnostics = estimate_expectation(
             expct_conditioned, 
             tabi;
             store_intermediate_samples=true
@@ -146,7 +146,7 @@ Random.seed!(42)
         tabi_no_rejection = TABI(
             AIS(num_samples, num_annealing_dists, SimpleRejection())
         )
-        _, _ =  estimate(
+        _, _ =  estimate_expectation(
             expct_conditioned, 
             tabi_no_rejection;
             store_intermediate_samples=true
@@ -155,7 +155,7 @@ Random.seed!(42)
         tabi_rejection = TABI(
             AIS(num_samples, num_annealing_dists, RejectionResample())
         )
-        _, _ =  estimate(
+        _, _ =  estimate_expectation(
             expct_conditioned, 
             tabi_rejection;
             store_intermediate_samples=true
@@ -181,20 +181,20 @@ Random.seed!(42)
             AIS(num_samples, num_annealing_dists, SimpleRejection())
         )
 
-        _, d =  estimate(
+        _, d =  estimate_expectation(
             expct_conditioned, 
             tabi_no_Z1_neg;
             store_intermediate_samples=true
         )
             
         full_tabi = TABI(AIS(num_samples, num_annealing_dists, SimpleRejection()))
-        _, d_full =  estimate(
+        _, d_full =  estimate_expectation(
             expct_conditioned, 
             tabi_no_Z1_neg;
             store_intermediate_samples=true
         )
 
-        # Check that estimate is type-stable.
+        # Check that estimate_expectation is type-stable.
         @test typeof(d_full) == typeof(d)
     end
 
@@ -214,7 +214,7 @@ Random.seed!(42)
             TuringAlgorithm(IS(), num_samples)
         )
         
-        expct_estimate, diag = estimate(
+        expct_estimate, diag = estimate_expectation(
             expct_conditioned, 
             tabi;
             progress=false
@@ -228,7 +228,7 @@ Random.seed!(42)
 
     @testset "Prior extraction" begin
         @expectation function expct(y)
-            x ~ Normal(0, 1) 
+        x ~ Normal(0, 1) 
             y ~ Normal(x, 1)
             return x
         end
@@ -239,7 +239,7 @@ Random.seed!(42)
         log_prior = AnnealedIS.make_log_prior_density(
             expct_conditioned.gamma1_pos
         )
-
+        
         xval = 0.0
         true_prior = logpdf(Normal(0, 1), xval)
         @test log_prior((x = xval,)) == true_prior
@@ -262,7 +262,7 @@ Random.seed!(42)
             TuringAlgorithm(AnnealedIS.AnIS(num_annealing_dists), num_samples)
         )
         
-        expct_estimate, diag = estimate(expct_conditioned, tabi)
+        expct_estimate, diag = estimate_expectation(expct_conditioned, tabi)
 
         @test typeof(expct_estimate) == Float64
         for key in [:Z1_positive_info, :Z1_negative_info, :Z2_info]
