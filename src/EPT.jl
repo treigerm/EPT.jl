@@ -1,4 +1,4 @@
-module ExpectationProgramming
+module EPT
 
 using Reexport
 @reexport using Turing
@@ -47,9 +47,9 @@ macro expectation(expr)
     neg_bodies = translate_return(fn_body, false)
 
     num_expectations = length(pos_bodies)
-    expressions = Array{Expr}(undef, num_expectations+2)
+    expressions = Array{Expr}(undef, num_expectations + 2)
     arr_name = gensym()
-    expressions[1] =quote
+    expressions[1] = quote
         $fn_expr_expct2
     
         $(arr_name) = Array{Expectation}(undef, $num_expectations)
@@ -69,7 +69,7 @@ macro expectation(expr)
         fn_expr_expct1_neg = MacroTools.combinedef(fn_dict)
         fn_expr_expct1_neg = Turing.DynamicPPL.model(fn_expr_expct1_neg, false)
 
-        expressions[i+1] = quote
+        expressions[i + 1] = quote
             $fn_expr_expct1_pos
     
             $fn_expr_expct1_neg
@@ -143,13 +143,13 @@ function translate_return(expr, is_positive_expectation)
     return expressions
 end
 
-struct TABI{S<:Turing.InferenceAlgorithm,T<:Turing.InferenceAlgorithm,U<:Turing.InferenceAlgorithm}
+struct TABI{S <: Turing.InferenceAlgorithm,T <: Turing.InferenceAlgorithm,U <: Turing.InferenceAlgorithm}
     Z1_pos_alg::S
     Z1_neg_alg::T
     Z2_alg::U
 end
 
-function TABI(estimation_alg::T) where {T<:Turing.InferenceAlgorithm}
+function TABI(estimation_alg::T) where {T <: Turing.InferenceAlgorithm}
     return TABI(
         estimation_alg,
         estimation_alg,
@@ -162,13 +162,13 @@ function Base.show(io::IO, tabi::TABI)
     print(io, s)
 end
 
-struct AIS{T<:AnnealedIS.RejectionSampler} <: Turing.InferenceAlgorithm
+struct AIS{T <: AnnealedIS.RejectionSampler} <: Turing.InferenceAlgorithm
     num_samples::Int
     num_annealing_dists::Int
     rejection_sampler::T
 end
 
-struct TuringAlgorithm{T<:Turing.InferenceAlgorithm} <: Turing.InferenceAlgorithm
+struct TuringAlgorithm{T <: Turing.InferenceAlgorithm} <: Turing.InferenceAlgorithm
     inference_algorithm::T
     num_samples::Int
 end
@@ -177,7 +177,7 @@ function Distributions.estimate(
     expct::Expectation, 
     alg::TABI{T,T,T}; 
     kwargs...
-) where {T<:AIS}
+) where {T <: AIS}
     ais = AnnealedISSampler(
         expct.gamma2, 
         alg.Z2_alg.num_annealing_dists,
@@ -242,7 +242,7 @@ function Distributions.estimate(
     expct::Expectation,
     alg::TABI{T,T,T};
     kwargs...
-) where {T<:TuringAlgorithm}
+) where {T <: TuringAlgorithm}
     Z1_positive, Z1_positive_chain = estimate_normalisation_constant(
         expct.gamma1_pos, alg.Z1_pos_alg; kwargs...
     )
