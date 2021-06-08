@@ -1,14 +1,14 @@
-using ExpectationProgramming
+using EPT
 using Turing
 using Test
 using Random
 
 import AnnealedIS
 
-#rng = MersenneTwister(42)
+# rng = MersenneTwister(42)
 Random.seed!(42)
 
-@testset "ExpectationProgramming.jl" begin
+@testset "EPT.jl" begin
     @testset "Expectation Macro" begin
         @expectation function expct(y)
             x ~ Normal(0, 1) 
@@ -22,7 +22,7 @@ Random.seed!(42)
         xval = 2
         vi = Turing.VarInfo(expct_conditioned.gamma1_pos)
         vi[@varname(x)] = [xval;]
-        #vi[@varname(y)] = [yval;]
+        # vi[@varname(y)] = [yval;]
 
         # Check that the three different models return the right score for a given trace.
         gamma2_lp = logpdf(Normal(0, 1), xval) + logpdf(Normal(xval, 1), yval) 
@@ -74,7 +74,7 @@ Random.seed!(42)
     end
 
     # Comment this out because it takes a while.
-    #@testset "Convergence test" begin
+    # @testset "Convergence test" begin
     #    @expectation function expct(y)
     #        x ~ Normal(0, 1) 
     #        y ~ Normal(x, 1)
@@ -93,7 +93,7 @@ Random.seed!(42)
 
     #    expct_estimate, diagnostics = estimate(expct_conditioned, tabi)
     #    @test_broken isapprox(expct_estimate, 1.5, atol=1e-2)
-    #end
+    # end
 
     @testset "Diagnostics" begin
         @expectation function expct(y)
@@ -186,7 +186,7 @@ Random.seed!(42)
             tabi_no_Z1_neg;
             store_intermediate_samples=true
         )
-
+            
         full_tabi = TABI(AIS(num_samples, num_annealing_dists, SimpleRejection()))
         _, d_full =  estimate(
             expct_conditioned, 
@@ -234,17 +234,17 @@ Random.seed!(42)
         end
 
         yval = 3
-        expct_conditioned = expct(yval)
+            expct_conditioned = expct(yval)
 
         log_prior = AnnealedIS.make_log_prior_density(
             expct_conditioned.gamma1_pos
         )
 
         xval = 0.0
-        true_prior = logpdf(Normal(0,1), xval)
+        true_prior = logpdf(Normal(0, 1), xval)
         @test log_prior((x = xval,)) == true_prior
     end
-
+        
     @testset "Turing AnIS" begin
         @expectation function expct(y)
             x ~ Normal(0, 1) 
@@ -277,7 +277,7 @@ Random.seed!(42)
             return x, x^2, x^3
         end
 
-        @test isa(expct, Array{ExpectationProgramming.Expectation})
+        @test isa(expct, Array{EPT.Expectation})
         @test length(expct) == 3
     end
 end
