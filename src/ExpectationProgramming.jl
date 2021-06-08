@@ -17,8 +17,6 @@ export @expectation,
     RejectionResample,
     SimpleRejection
 
-# TODO: What are the correct types for the fields? They are Turing models.
-# They can either be a turing model or a turing modelgen.
 struct Expectation
     gamma1_pos
     gamma1_neg
